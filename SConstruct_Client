@@ -1,0 +1,3 @@
+Program('FtpClient', Glob('ftpClient/*.cpp') + Glob('util/*.cpp') + Glob('lib_json/*.cpp') ,
+    parse_flags='-D_REENTRANT -I./lib_json/json -I./util -std=c++11')
+
