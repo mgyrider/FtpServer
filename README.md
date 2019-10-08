@@ -1,2 +1,2 @@
 # FtpServer
-a simpe Ftp client and server
+a simple FTP client and server
