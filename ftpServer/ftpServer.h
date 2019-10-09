@@ -2,6 +2,7 @@
 #define __FTP_SERVER_H__
 #include <string>
 #include <map>
+#include "json.h"
 using namespace std;
 
 class ftpClient
@@ -20,10 +21,17 @@ public:
     void clearFileList() {
         FileList.clear();
     }
+    Json::Value& getJsonReq() {
+        return jsonRequest;
+    }
+    int getFd() {
+        return fd;
+    }
 private:
     int fd;
     std::string curDir;
     map<string, bool> FileList;
+    Json::Value jsonRequest;
 };
 
 #endif

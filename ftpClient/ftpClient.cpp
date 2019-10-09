@@ -34,21 +34,59 @@ private:
     bool isDir;
 };
 
+vector<string> readCommand()
+{
+    string str;
+    vector<string> vec;
+    if (!getline(cin, str)) {
+        vec.push_back("EOF"); /* 读到EOF */
+        return vec;
+    }
+    int i = 0;
+    int len = str.size();
+    while (i < len && str[i] == ' ') {
+        ++i;
+    }
+    if (i == len) {
+        return vec;
+    }
+    int j = len - 1;
+    while (j >= 0 && str[j] == ' ') {
+        --j;
+    }
+    int k = i;
+    for (k = i; k <= j; ++k) {
+        if (str[k] == ' ') {
+            int len2 = k - i;
+            vec.push_back(str.substr(i, len2));
+            while (k <= j && str[k] == ' ') {
+                ++k;
+            }
+            i = k;
+            --k;
+        }
+    }
+    vec.push_back(str.substr(i, j - i + 1));
+    // for (auto s: vec) {
+    //     cout << s << endl;
+    // }
+    return vec;
+}
 
 void clientProcessLs(int fd, char* buffer)
 {
     string s = "{}";
-    int len = createMsg(0, s.size(), buffer, s.c_str());
+    int len = createMsg(COMMOND_LS, s.size(), buffer, s.c_str());
     write(fd, buffer, len);
     readMsg(fd, buffer);
     /* 解析JSON */
-    Json::Reader reader;
     Json::Value  resp;
-    if (!reader.parse(buffer, resp, false)) {
+    if (parseJson(buffer, resp) != 0) {
         cout << "json 格式错误" << endl;
         return;
     }
     Json::Value jresult = resp["result"];
+    /* 遍历文件目录 */
     vector<FileItem> FileList;
     for (int i = 0; i < jresult.size(); ++i) {
         Json::Value& item = jresult[i];
@@ -62,23 +100,55 @@ void clientProcessLs(int fd, char* buffer)
     }
 }
 
+void clientProcessGet(int fd, char* buffer, string fileName, string desPath = "/home/") {
+    Json::Value req;
+    req["fileName"] = fileName;
+    Json::StreamWriterBuilder wbuilder;
+    string jsonReq = Json::writeString(wbuilder, req);
+    int len = createMsg(COMMOND_GET, jsonReq.size(), buffer, jsonReq.c_str());
+    write(fd, buffer, len);
+    readMsg(fd, buffer);
+    /* 解析JSON */
+    Json::Value  resp;
+    if (parseJson(buffer, resp) != 0) {
+        cout << "json 格式错误" << endl;
+        return;
+    }
+    int retcode = resp["retcode"].asInt();
+    if (retcode == 0) {
+        long long fileSize =  resp["fileSize"].asInt64();
+        cout << "get file size " << fileSize << endl;
+        /* 开始接收文件 */
+        char buf[1000];
+        int n = read(fd, buf, fileSize);
+        cout << n << endl;
+        buf[n] = '\0';
+        cout << buf << endl;
+    } else {
+        cout << resp["error"].asString() << endl;
+    }
+}
+
 int userShell(int fd)
 {
     char buffer[1000];
     for ( ; ; ) {
-        string cmdline;
         printf("\n\n");
         printf("# ");
-        cin >> cmdline;
-        if (cmdline == "ls") {
+        vector<string> cmdline =  readCommand();
+        if (cmdline.size() == 0) {
+            continue;
+        }
+        // cout << cmdline[0] << " " << cmdline.size() << endl;
+        if (cmdline[0] == "ls") {
             clientProcessLs(fd, buffer);
-        } else if (cmdline == "cd") {
+        } else if (cmdline[0] == "cd") {
             cout << "cd" << endl;
-        } else {
-            cout << "error\n";
+        } else if (cmdline[0] == "get" && cmdline.size() == 2) {
+            clientProcessGet(fd, buffer, cmdline[1]);
         }
         /* EOF */
-        if (cmdline.size() == 0) {
+        if (cmdline[0] == "EOF") {
             break;
         }
     }

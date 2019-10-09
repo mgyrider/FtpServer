@@ -13,10 +13,10 @@
 #include <unistd.h>
 #include <map>
 #include <dirent.h>
+#include <sys/sendfile.h>
 using namespace std;
 
 #define MAX_EVENTS 10
-#define COMMOND_LS 0
 
 map<int, ftpClient* > ftpClients;
 
@@ -28,12 +28,13 @@ int setNonBlocking(int sockfd)
     return 0;  
 }
 
-void processLS(ftpClient *c, Json::Value& result) {
+int processLs(ftpClient *c, Json::Value& resp) {
     DIR *dir = opendir(c->getCurDir());
     if (dir == NULL) {
         perror("opendir failed");
-        return;
+        return 1;
     }
+    Json::Value result;
     struct dirent *dirPtr;
     while ((dirPtr = readdir(dir)) != NULL) {
         Json::Value item;
@@ -41,26 +42,54 @@ void processLS(ftpClient *c, Json::Value& result) {
         item["isDir"] = (dirPtr->d_type == DT_DIR ? 1 : 0);
         result.append(item);
     }
+    resp["retcode"] = 0;
+    resp["result"] = result;
+    char buffer[10000];
+    sendJson(c->getFd(), resp, buffer);
+    return 0;
+}
+
+int processGet(ftpClient *c, Json::Value& resp) {
+    string fileName = c->getJsonReq()["fileName"].asString();
+    int fileFd = open(fileName.c_str(), O_RDONLY);
+    if (fileFd == -1) {
+        resp["error"] = "file does not exist";
+        return 1;
+    }
+    int fileSize = getFileSize(fileName.c_str());
+    if (fileSize == -1) {
+        return 1;
+    }
+    resp["retcode"] = 0;
+    resp["fileSize"] = fileSize;
+    char buffer[10000];
+    sendJson(c->getFd(), resp, buffer);
+    /* 发送文件 */
+    int res = sendfile(c->getFd(), fileFd, 0, fileSize);
+    cout << "sendres " << res << " " << endl;
+    return 0;
 }
 
 void processMsg(int type, int fd) {
     ftpClient* client = ftpClients[fd];
-    Json::Value result;
+    Json::Value resp;
+    int retcode = 0;
     switch (type) {
         case COMMOND_LS:
-            processLS(client, result);
+            retcode = processLs(client, resp);
+            break;
+        case COMMOND_GET:
+            retcode = processGet(client, resp);
             break;
         default:
             break;
     }
     /* 向客户端发送回复 */
-    char buffer[10000];
-    Json::Value resp;
-    Json::StreamWriterBuilder wbuilder;
-    resp["result"] = result;
-    string jsonResp = Json::writeString(wbuilder, resp);
-    int len = createMsg(COMMOND_LS, jsonResp.size(), buffer, jsonResp.c_str());
-    write(fd, buffer, len);
+    if (retcode != 0) {
+        resp["retcode"] = retcode;
+        char buffer[10000];
+        sendJson(fd, resp, buffer);
+    }
     return;
 }
 
@@ -131,8 +160,22 @@ int main()
                 ftpClients[clientFd] = new ftpClient(clientFd);
             } else {
                 int type = readMsg(eventFd, buffer);
+                // cout << type << endl;
                 if (type != -1) {
+                    if (parseJson(buffer, ftpClients[eventFd]->getJsonReq()) != 0) {
+                        cout << "json 格式错误" << endl;
+                        continue;
+                    }
                     processMsg(type, eventFd);
+                } else {
+                    /* 关闭连接 */
+                    printf("客户端 %d 关闭\n", eventFd);
+                    ftpClient* c = ftpClients[eventFd];
+                    if (c) {
+                        delete c;
+                    }
+                    ftpClients.erase(eventFd);
+                    close(eventFd);
                 }
             }
         }
